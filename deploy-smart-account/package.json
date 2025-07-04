@@ -1,0 +1,16 @@
+{
+  "name": "deploy-smart-account",
+  "version": "1.0.0",
+  "description": "example reusable code for deploying smart account",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "dotenv": "^17.0.1",
+    "ethers": "^6.15.0"
+  }
+}
