@@ -2,8 +2,9 @@ const {AbiCoder, ethers} = require('ethers');
 require('dotenv').config();
 
 // Import the contract ABI
-const abi = require('./MachineStationFactoryABI.json');
-const rpcURL = 'https://erpc-async.agung.peaq.network';
+const {abi} = require('./MachineStationFactoryABI.json');
+
+const rpcURL = 'https://wss-async.agung.peaq.network';
 const chainID = 9990;
 
 const failedDeployments = {};
@@ -18,25 +19,21 @@ const contract =
     new ethers.ContractFactory(abi, MachineStationFactoryContractAddress);
 
 // Wallet details
-const stationManagerPrivateKey1 =
-    process.env.STATION_MANAGER_1_PRIVATE_KEY;  // first station manager
-const stationManagerPrivateKey2 =
-    process.env.STATION_MANAGER_2_PRIVATE_KEY;  // second station manager
-const machineOwnerPrivateKey = process.env.machineOwner_PRIVATE_KEY;
+const stationAdminPrivateKey1 = process.env.STATION_ADMIN_1_PRIVATE_KEY;  // first station admin
+const stationAdminPrivateKey2 = process.env.STATION_ADMIN_2_PRIVATE_KEY;  // second station admin
+const stationManagerPrivateKey1 = process.env.STATION_MANAGER_1_PRIVATE_KEY;  // first station manager
+const stationManagerPrivateKey2 = process.env.STATION_MANAGER_2_PRIVATE_KEY;  // second station manager
 
 const provider = new ethers.JsonRpcProvider(rpcURL);
 
-const stationManagetAccount1 =
-    new ethers.Wallet(stationManagerPrivateKey1, provider);
-const stationManagetAccount2 =
-    new ethers.Wallet(stationManagerPrivateKey2, provider);
-const machinestationManagetAccount1 =
-    new ethers.Wallet(machineOwnerPrivateKey, provider);
+const stationAdminAccount1 = new ethers.Wallet(stationAdminPrivateKey1, provider);
+const stationAdminAccount2 = new ethers.Wallet(stationAdminPrivateKey2, provider);
+const stationManagerAccount1 = new ethers.Wallet(stationManagerPrivateKey1, provider);
+const stationManagerAccount2 = new ethers.Wallet(stationManagerPrivateKey2, provider);
 
 console.log({
-  stationManager1: stationManagetAccount1.address,
-  stationManager2: stationManagetAccount2.address,
-  machineOwner: machinestationManagetAccount1.address
+  stationManager1: stationManagerAccount1.address,
+  stationManager2: stationManagerAccount2.address,
 });
 
 async function signTypedDataDeployMachineSmartAccount(machineOwner, nonce) {
@@ -64,7 +61,7 @@ async function signTypedDataDeployMachineSmartAccount(machineOwner, nonce) {
 
   // Sign the typed data
   const signature =
-      await stationManagetAccount1.signTypedData(domain, types, message);
+      await stationAdminAccount1.signTypedData(domain, types, message);
 
   return signature;
 }
@@ -92,7 +89,7 @@ async function deployMachineSmartAccount(
     };
 
     const txResponse = await stationManager.sendTransaction(tx);
-    let receipt = await txResponse.wait(3).finally();
+    let receipt = await txResponse.wait().finally();
 
     const logs = receipt?.logs;
 
@@ -102,13 +99,9 @@ async function deployMachineSmartAccount(
 
     // Find the relevant log
     const log = logs?.find((log) => log.topics[0] === eventSignature);
-
-    console.log('raw log: ', log);
-
     if (!log) {
       throw new Error('MachineSmartAccountDeployed event not found in logs');
     }
-
 
     // The deployed address is stored as the second topic (topics[1]) in a
     // 32-byte format
@@ -117,15 +110,16 @@ async function deployMachineSmartAccount(
         `0x${rawDeployedAddress.slice(26)}`);  // Extract last 20 bytes
 
     console.log('Machine Deploy Tx executed:', receipt?.hash);
-    console.log('Machine Deployed Address:', deployedAddress);
+    console.log(`Machine Deployed Address: ${deployedAddress} \n\n`);
 
-    if (failedDeployments[machineOwner].length > 0) {
+    if (machineOwner in failedDeployments) {
       delete failedDeployments[machineOwner];
     }
 
     return deployedAddress;
 
   } catch (error) {
+    // add the machine owner address to the failDeployment var
     failedDeployments[machineOwner] = machineOwner;
     console.error('Transaction failed. Error:', error);
 
@@ -138,16 +132,6 @@ async function deployMachineSmartAccount(
 
         console.log('Decoded Error:', decodedError);
 
-        // Extract error name and arguments
-        // const { name, args } = decodedError;
-        // console.log("Error Name:", name);
-        // console.log("Arguments:", args);
-
-        // if (name === "InvalidSignature") {
-        //   console.error("InvalidSignature Error Details:");
-        //   console.error("structHash:", args.structHash);
-        //   console.error("nonce:", args.nonce.toString());
-        // }
       } catch (decodeError) {
         console.error('Failed to decode error data:', decodeError);
       }
@@ -158,7 +142,9 @@ async function deployMachineSmartAccount(
 }
 
 async function processDeployment() {
-  let totalRequest = 1000;
+  console.error('processDeployment() hittss');
+  //   total number of machines to be created
+  let totalRequest = 20;
 
   for (let index = 0; index < totalRequest; index++) {
     let newMachineOwnerWallet = ethers.Wallet.createRandom(provider);
@@ -166,36 +152,59 @@ async function processDeployment() {
     let nonce = getRandomNumber();
     let signature =
         await signTypedDataDeployMachineSmartAccount(newMachineOwner, nonce);
-    let methodData =
-        encodeDeploySmartAccountMethod(newMachineOwner, nonce, signature);
+
+    // // REMOVE IN PRODUCTION CODE: THIS IS USED TO SIMULATE FAILURE SO RETRY CAN BE TESTED
+    // //  set an invalid nonce on every 5th item so that the transaction
+    // // submission will throw an error
+    // if ((index + 1) % 5 == 0) {
+    //   console.log('invalid nonce set!: ', index + 1);
+    //   nonce = getRandomNumber();
+    // }
+
+    let methodData = encodeDeploySmartAccountMethod(newMachineOwner, nonce, signature);
+    
+    console.log(`Deploying Machine: ${index + 1}`);
     // used first station manager
-    deployMachineSmartAccount(methodData, stationManagerPrivateKey1);
+    await deployMachineSmartAccount(newMachineOwner, methodData, stationManagerAccount1);
   }
 }
 
 async function retryFailedDeployments() {
+  console.error('retryFailedDeployments() hittss');
+  console.error('current failedDeployments: ', failedDeployments);
+
   for (const [_, value] of Object.entries(failedDeployments)) {
     let newMachineOwner = value;
     let nonce = getRandomNumber();
+    console.error('retryFailedDeployments: newMachineOwner: ', newMachineOwner);
+
+
     let signature =
         await signTypedDataDeployMachineSmartAccount(newMachineOwner, nonce);
     let methodData =
         encodeDeploySmartAccountMethod(newMachineOwner, nonce, signature);
     // used second station manager
-    deployMachineSmartAccount(methodData, stationManagerPrivateKey2);
+    await deployMachineSmartAccount(
+        newMachineOwner, methodData, stationManagerAccount2);
   }
 }
 
-
 (async () => {
-  encodeDeploySmartAccountMethod(
-      machinestationManagetAccount1,
-  );
-//   setInterval(() => {
-//     try {
-//       retryFailedDeployments();
-//     } catch (error) {
-//       console.error('Error occurred:', error.message);
-//     }
-//   }, 5 * 60 * 1000);
-});
+  let retryInProgress = false;
+  async function runRetryCycle() {
+    console.log("runRetryCycle hitts");
+    if (retryInProgress) return;
+
+    retryInProgress = true;
+    try {
+      await retryFailedDeployments();
+    } catch (error) {
+      console.error('Error occurred during retry:', error?.message || error);
+    } finally {
+      retryInProgress = false;
+    }
+  }
+    // retry failed deployment every minute
+  setInterval(runRetryCycle, 1 * 60 * 1000);
+  processDeployment();
+})();
